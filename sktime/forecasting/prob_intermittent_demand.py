@@ -321,17 +321,19 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
 
         return regressors + x
 
-    def _sample_probability(self, length: int, X: np.ndarray) -> jnp.ndarray:
+    def _sample_probability(
+        self, length: int, X: np.ndarray, oos: int = 0
+    ) -> jnp.ndarray:
         logit_prob = self._sample_parameters(
-            length=length, X=X, time_regressor=self.time_varying_probability, oos=0
+            length=length, X=X, time_regressor=self.time_varying_probability, oos=oos
         )
         prob = jax.nn.sigmoid(logit_prob)
 
         return prob
 
-    def _sample_demand(self, length: int, X: np.ndarray) -> jnp.ndarray:
+    def _sample_demand(self, length: int, X: np.ndarray, oos: int = 0) -> jnp.ndarray:
         log_demand = self._sample_parameters(
-            length=length, time_regressor=self.time_varying_demand, X=X
+            length=length, time_regressor=self.time_varying_demand, X=X, oos=oos
         )
         demand = jnp.exp(log_demand)
 
@@ -347,10 +349,10 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
         index: np.array = None,
     ):
         with numpyro.handlers.scope(prefix="probability"):
-            prob = self._sample_probability(length, X)
+            prob = self._sample_probability(length, X, oos=oos)
 
         with numpyro.handlers.scope(prefix="demand"):
-            demand = self._sample_demand(length, X)
+            demand = self._sample_demand(length, X, oos=oos)
 
         if index is not None:
             prob = prob[index]
