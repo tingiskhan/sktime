@@ -18,8 +18,83 @@ from sktime.forecasting.base import ForecastingHorizon
 # TODO: think about priors, can we make them more informative?
 
 
-# TODO: replace truncated laplace with a more formalized approach
-class ZeroInflatedPoissonDemandForecaster(BaseBayesianForecaster):
+class _BaseProbabilisticDemandForecaster(BaseBayesianForecaster):
+    """Base class for probabilistic intermittent demand forecasters."""
+
+    def _get_fit_data(self, y: pd.DataFrame, X: pd.DataFrame, fh: ForecastingHorizon):
+        return {
+            "length": y.shape[0],
+            "y": jnp.array(y.values),
+            "X": jnp.array(X.values) if X is not None else None,
+            "mask": jnp.isfinite(y.values),
+        }
+
+    def _get_predict_data(self, X: pd.DataFrame, fh: ForecastingHorizon):
+        # TODO: handle this better - only append if X is not in self._X
+        if X is not None:
+            X = pd.concat([self._X, X], axis=0, verify_integrity=True)
+
+        index = fh.to_absolute_int(self._y.index[0], self._cutoff)
+        oos = fh.to_out_of_sample(self.cutoff).to_numpy().size
+
+        return {
+            "length": self._y.shape[0] + oos,
+            "y": None,
+            "X": jnp.array(X.values) if X is not None else None,
+            "oos": oos,
+            "index": index.to_numpy(),
+            "mask": True,
+        }
+
+    def _predict_proba(self, marginal=True, **kwargs):
+        if self._is_vectorized:
+            return self._vectorize_predict_method("_predict_components", **kwargs)
+
+        predictive_samples = self._get_predictive_samples_dict(**kwargs)
+        y_hat = predictive_samples["observed"]
+
+        index = kwargs["fh"].to_absolute(self.cutoff).to_numpy()
+        as_array = DataArray(y_hat, dims=["sample", "time"], coords={"time": index})
+
+        as_frame = as_array.to_dataframe(self._y_metadata["feature_names"][0])
+
+        return Empirical(as_frame, time_indep=False)
+
+    def model(
+        self,
+        length: int,
+        y: jnp.ndarray,
+        X: np.ndarray,
+        mask: jnp.ndarray,
+        oos: int = 0,
+        index: np.array = None,
+    ):
+        """
+        Build the model for the probabilistic intermittent demand forecaster.
+
+        Parameters
+        ----------
+        length: int
+            Length of the series to sample.
+        y: jnp.ndarray
+            Observed values.
+        X: np.ndarray
+            Exogenous variables.
+        mask: jnp.ndarray
+            Mask for the observed values.
+        oos: int
+            Number of out-of-sample points to forecast.
+        index: np.array
+            Index to select.
+
+        Returns
+        -------
+            Nothing.
+        """
+        raise NotImplementedError()
+
+
+class ZeroInflatedPoissonDemandForecaster(_BaseProbabilisticDemandForecaster):
     r"""Probabilistic Intermittent Demand Forecaster.
 
     Uses a Bayesian approach to forecast intermittent demand time series by modeling
@@ -83,31 +158,6 @@ class ZeroInflatedPoissonDemandForecaster(BaseBayesianForecaster):
         self.time_varying_gate = time_varying_gate
         self.time_varying_rate = time_varying_rate
 
-    def _get_fit_data(self, y: pd.DataFrame, X: pd.DataFrame, fh: ForecastingHorizon):
-        return {
-            "length": y.shape[0],
-            "y": jnp.array(y.values),
-            "X": jnp.array(X.values) if X is not None else None,
-            "mask": jnp.isfinite(y.values),
-        }
-
-    def _get_predict_data(self, X: pd.DataFrame, fh: ForecastingHorizon):
-        # TODO: handle this better - only append if X is not in self._X
-        if X is not None:
-            X = pd.concat([self._X, X], axis=0, verify_integrity=True)
-
-        index = fh.to_absolute_int(self._y.index[0], self._cutoff)
-        oos = fh.to_out_of_sample(self.cutoff).to_numpy().size
-
-        return {
-            "length": self._y.shape[0] + oos,
-            "y": None,
-            "X": jnp.array(X.values) if X is not None else None,
-            "oos": oos,
-            "index": index.to_numpy(),
-            "mask": True,
-        }
-
     def _sample_gate(self, length: int, X: np.ndarray) -> jnp.ndarray:
         """Sample the gate parameter for the ZIP model."""
         features = np.ones((length, 1))
@@ -146,7 +196,7 @@ class ZeroInflatedPoissonDemandForecaster(BaseBayesianForecaster):
 
         return rate
 
-    def model(
+    def model(  # noqa: D102
         self,
         length: int,
         y: jnp.ndarray,
@@ -155,28 +205,6 @@ class ZeroInflatedPoissonDemandForecaster(BaseBayesianForecaster):
         oos: int = 0,
         index: np.array = None,
     ):
-        """
-        Build the model for the probabilistic intermittent demand forecaster.
-
-        Parameters
-        ----------
-        length: int
-            Length of the series to sample.
-        y: jnp.ndarray
-            Observed values.
-        X: np.ndarray
-            Exogenous variables.
-        mask: jnp.ndarray
-            Mask for the observed values.
-        oos: int
-            Number of out-of-sample points to forecast.
-        index: np.array
-            Index to select.
-
-        Returns
-        -------
-            Nothing.
-        """
         with numpyro.handlers.scope(prefix="gate"):
             gate = self._sample_gate(length, X)
 
@@ -232,16 +260,20 @@ class ZeroInflatedPoissonDemandForecaster(BaseBayesianForecaster):
 
         return self._inv_scale_y(out)
 
-    def _predict_proba(self, marginal=True, **kwargs):
-        if self._is_vectorized:
-            return self._vectorize_predict_method("_predict_components", **kwargs)
 
-        predictive_samples = self._get_predictive_samples_dict(**kwargs)
-        y_hat = predictive_samples["observed"]
+class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
+    r"""Probabilistic Intermittent Demand Forecaster using a hurdle model."""
 
-        index = kwargs["fh"].to_absolute(self.cutoff).to_numpy()
-        as_array = DataArray(y_hat, dims=["sample", "time"], coords={"time": index})
+    def __init__(self, inference_engine=None):
+        super().__init__(scale=1.0, inference_engine=inference_engine)
 
-        as_frame = as_array.to_dataframe(self._y_metadata["feature_names"][0])
-
-        return Empirical(as_frame, time_indep=False)
+    def model(  # noqa: D102
+        self,
+        length: int,
+        y: jnp.ndarray,
+        X: np.ndarray,
+        mask: jnp.ndarray,
+        oos: int = 0,
+        index: np.array = None,
+    ):
+        pass
