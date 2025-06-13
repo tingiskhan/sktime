@@ -6,7 +6,9 @@ import numpy as np
 import numpyro.handlers
 import pandas as pd
 from numpyro.distributions import (
+    Bernoulli,
     Normal,
+    Poisson,
     ZeroInflatedPoisson,
 )
 from prophetverse.sktime.base import BaseBayesianForecaster
@@ -24,8 +26,8 @@ class _BaseProbabilisticDemandForecaster(BaseBayesianForecaster):
     def _get_fit_data(self, y: pd.DataFrame, X: pd.DataFrame, fh: ForecastingHorizon):
         return {
             "length": y.shape[0],
-            "y": jnp.array(y.values),
-            "X": jnp.array(X.values) if X is not None else None,
+            "y": y.values,
+            "X": X.values if X is not None else None,
             "mask": jnp.isfinite(y.values),
         }
 
@@ -40,7 +42,7 @@ class _BaseProbabilisticDemandForecaster(BaseBayesianForecaster):
         return {
             "length": self._y.shape[0] + oos,
             "y": None,
-            "X": jnp.array(X.values) if X is not None else None,
+            "X": X.values if X is not None else None,
             "oos": oos,
             "index": index.to_numpy(),
             "mask": True,
@@ -264,8 +266,51 @@ class ZeroInflatedPoissonDemandForecaster(_BaseProbabilisticDemandForecaster):
 class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
     r"""Probabilistic Intermittent Demand Forecaster using a hurdle model."""
 
+    _tags = {
+        "authors": ["tingiskhan", "felipeangleimvieira"],
+        "maintainers": ["tingiskhan"],
+        "python_version": None,
+        "python_dependencies": ["prophetverse"],
+        "object_type": "forecaster",
+        "scitype:y": "univariate",
+        "ignores-exogeneous-X": False,
+        "capability:insample": True,
+        "capability:pred_int": True,
+        "capability:pred_int:insample": True,
+        "capability:missing_values": True,
+        "y_inner_mtype": "pd.Series",
+        "X_inner_mtype": "pd.DataFrame",
+        "requires-fh-in-fit": False,
+        "X-y-must-have-same-index": True,
+        "enforce_index_type": None,
+        "fit_is_empty": False,
+        "capability:categorical_in_X": True,
+    }
+
     def __init__(self, inference_engine=None):
         super().__init__(scale=1.0, inference_engine=inference_engine)
+
+    def _sample_probability(self, length: int, X: np.ndarray) -> jnp.ndarray:
+        features = np.ones((length, 1))
+
+        if X is not None:
+            features = np.concatenate((features, X), axis=1)
+
+        with numpyro.plate("factors", features.shape[-1]):
+            beta = numpyro.sample("beta", Normal())
+
+        regressors = features @ beta
+
+        # TODO: add support for time varying prob parameters
+        prob = jax.nn.sigmoid(regressors)
+
+        return prob
+
+    def _sample_demand(self, length: int, X: np.ndarray) -> jnp.ndarray:
+        log_demand = numpyro.sample("log_demand", Normal())
+        demand = jnp.exp(log_demand)
+
+        return jnp.full((length,), demand)
 
     def model(  # noqa: D102
         self,
@@ -276,4 +321,17 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
         oos: int = 0,
         index: np.array = None,
     ):
-        pass
+        with numpyro.handlers.scope(prefix="probability"):
+            prob = self._sample_probability(length, X)
+
+        with numpyro.handlers.scope(prefix="demand"):
+            demand = self._sample_demand(length, X)
+
+        # events
+        events = y > 0.0
+        numpyro.sample("events:ignore", Bernoulli(prob), obs=events)
+
+        # demand
+        numpyro.sample("demand:ignore", Poisson(demand[events]), obs=y[events])
+
+        return
