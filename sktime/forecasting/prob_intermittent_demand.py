@@ -7,6 +7,8 @@ import numpyro.handlers
 import pandas as pd
 from numpyro.distributions import (
     Bernoulli,
+    GaussianRandomWalk,
+    LogNormal,
     Normal,
     Poisson,
     ZeroInflatedPoisson,
@@ -287,10 +289,20 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
         "capability:categorical_in_X": True,
     }
 
-    def __init__(self, inference_engine=None):
+    def __init__(
+        self,
+        time_varying_probability: bool = False,
+        time_varying_demand: bool = False,
+        inference_engine=None,
+    ):
         super().__init__(scale=1.0, inference_engine=inference_engine)
 
-    def _sample_probability(self, length: int, X: np.ndarray) -> jnp.ndarray:
+        self.time_varying_probability = time_varying_probability
+        self.time_varying_demand = time_varying_demand
+
+    def _sample_parameters(
+        self, length: int, X: np.ndarray, time_regressor: bool = False, oos: int = 0
+    ) -> jnp.ndarray:
         features = np.ones((length, 1))
 
         if X is not None:
@@ -301,22 +313,27 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
 
         regressors = features @ beta
 
-        # TODO: add support for time varying prob parameters
-        prob = jax.nn.sigmoid(regressors)
+        x = 0.0
+        # TODO: handle forecasting
+        if self.time_varying_demand:
+            sigma = numpyro.sample("sigma", LogNormal()) ** 0.5
+            x = numpyro.sample("x", GaussianRandomWalk(scale=sigma, num_steps=length))
+
+        return regressors + x
+
+    def _sample_probability(self, length: int, X: np.ndarray) -> jnp.ndarray:
+        logit_prob = self._sample_parameters(
+            length=length, X=X, time_regressor=self.time_varying_probability, oos=0
+        )
+        prob = jax.nn.sigmoid(logit_prob)
 
         return prob
 
     def _sample_demand(self, length: int, X: np.ndarray) -> jnp.ndarray:
-        features = np.ones((length, 1))
-
-        if X is not None:
-            features = np.concatenate((features, X), axis=1)
-
-        with numpyro.plate("factors", features.shape[-1]):
-            beta = numpyro.sample("beta", Normal())
-
-        regressors = features @ beta
-        demand = jnp.exp(regressors)
+        log_demand = self._sample_parameters(
+            length=length, time_regressor=self.time_varying_demand, X=X
+        )
+        demand = jnp.exp(log_demand)
 
         return demand
 
