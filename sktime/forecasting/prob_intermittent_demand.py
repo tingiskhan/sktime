@@ -307,10 +307,18 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
         return prob
 
     def _sample_demand(self, length: int, X: np.ndarray) -> jnp.ndarray:
-        log_demand = numpyro.sample("log_demand", Normal())
-        demand = jnp.exp(log_demand)
+        features = np.ones((length, 1))
 
-        return jnp.full((length,), demand)
+        if X is not None:
+            features = np.concatenate((features, X), axis=1)
+
+        with numpyro.plate("factors", features.shape[-1]):
+            beta = numpyro.sample("beta", Normal())
+
+        regressors = features @ beta
+        demand = jnp.exp(regressors)
+
+        return demand
 
     def model(  # noqa: D102
         self,
