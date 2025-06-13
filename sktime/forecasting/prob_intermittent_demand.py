@@ -335,11 +335,25 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
         with numpyro.handlers.scope(prefix="demand"):
             demand = self._sample_demand(length, X)
 
-        # events
-        events = y > 0.0
-        numpyro.sample("events:ignore", Bernoulli(prob), obs=events)
+        if index is not None:
+            prob = prob[index]
+            demand = demand[index]
 
-        # demand
-        numpyro.sample("demand:ignore", Poisson(demand[events]), obs=y[events])
+            events = None
+            observed_demand = None
+        else:
+            events = y > 0.0
+            observed_demand = y[events]
+            demand = demand[events]
+
+        sampled_events = numpyro.sample("events:ignore", Bernoulli(prob), obs=events)
+        sampled_demand = numpyro.sample(
+            "demand:ignore", Poisson(demand), obs=observed_demand
+        )
+
+        if oos == 0:
+            return
+
+        numpyro.deterministic("observed", sampled_events * sampled_demand)
 
         return
