@@ -315,7 +315,7 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
 
         x = 0.0
         # TODO: handle forecasting
-        if self.time_varying_demand:
+        if time_regressor:
             sigma = numpyro.sample("sigma", LogNormal()) ** 0.5
             x = numpyro.sample("x", GaussianRandomWalk(scale=sigma, num_steps=length))
 
