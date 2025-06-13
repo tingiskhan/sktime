@@ -327,7 +327,7 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
         logit_prob = self._sample_parameters(
             length=length, X=X, time_regressor=self.time_varying_probability, oos=oos
         )
-        prob = jax.nn.sigmoid(logit_prob)
+        prob = jax.scipy.special.expit(logit_prob)
 
         return prob
 
