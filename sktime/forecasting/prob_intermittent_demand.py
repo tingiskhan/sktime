@@ -149,20 +149,24 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
 
         regressors = features @ beta
 
-        x = 0.0
+        time_varying_component = 0.0
         # TODO: support autoregressive terms
         if time_regressor:
             sigma = numpyro.sample("sigma", LogNormal()) ** 0.5
-            x = numpyro.sample("x", GaussianRandomWalk(scale=sigma, num_steps=length))
+            time_varying_component = numpyro.sample(
+                "x", GaussianRandomWalk(scale=sigma, num_steps=length)
+            )
 
             if oos > 0:
-                x_oos = x[-1] + numpyro.sample(
+                x_oos = time_varying_component[-1] + numpyro.sample(
                     "x_oos", GaussianRandomWalk(scale=sigma, num_steps=oos)
                 )
 
-                x = jnp.concatenate((x, x_oos), axis=0)
+                time_varying_component = jnp.concatenate(
+                    (time_varying_component, x_oos), axis=0
+                )
 
-        return regressors + x
+        return regressors + time_varying_component
 
     def _sample_probability(
         self, length: int, X: np.ndarray, oos: int = 0
