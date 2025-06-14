@@ -314,10 +314,17 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
         regressors = features @ beta
 
         x = 0.0
-        # TODO: handle forecasting
+        # TODO: support autoregressive terms
         if time_regressor:
             sigma = numpyro.sample("sigma", LogNormal()) ** 0.5
             x = numpyro.sample("x", GaussianRandomWalk(scale=sigma, num_steps=length))
+
+            if oos > 0:
+                x_oos = x[-1] + numpyro.sample(
+                    "x_oos", GaussianRandomWalk(scale=sigma, num_steps=oos)
+                )
+
+                x = jnp.concatenate((x, x_oos), axis=0)
 
         return regressors + x
 
