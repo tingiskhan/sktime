@@ -11,7 +11,6 @@ from numpyro.distributions import (
     LogNormal,
     Normal,
     Poisson,
-    ZeroInflatedPoisson,
 )
 from prophetverse.sktime.base import BaseBayesianForecaster
 from skpro.distributions import Empirical
@@ -64,6 +63,10 @@ class _BaseProbabilisticDemandForecaster(BaseBayesianForecaster):
 
         return Empirical(as_frame, time_indep=False)
 
+    def _predict(self, fh, X):
+        predictive_samples = self.predict_components(fh=fh, X=X)
+        return predictive_samples["observed"]
+
     def model(
         self,
         length: int,
@@ -96,173 +99,6 @@ class _BaseProbabilisticDemandForecaster(BaseBayesianForecaster):
             Nothing.
         """
         raise NotImplementedError()
-
-
-class ZeroInflatedPoissonDemandForecaster(_BaseProbabilisticDemandForecaster):
-    r"""Probabilistic Intermittent Demand Forecaster.
-
-    Uses a Bayesian approach to forecast intermittent demand time series by modeling
-    the series as an Zero-Inflated Poisson (ZIP) process. The mathematical model is
-    given by
-    .. math::
-        y_t \sim ZIP(g_t, r_t)
-
-    where :math:`g_t` is the gate parameter and :math:`r_t` is the rate parameter. The
-    gate parameter determines the probability of observing a non-zero value, while the
-    rate parameter determines the expected value of the non-zero observations. The
-    rates and gates can be time-varying or constant, depending on the model
-    configuration. The general model structure is as follows:
-    .. math::
-        \logit{g_t} = \beta_{g, 0} + \beta_{g} \cdot X_t,
-        \log{r_t} = \beta_{r, 0} + \beta_{r} \cdot X_t
-
-    where :math:`X_t` are exogenous variables, and :math:`\beta` are regression
-    coefficients. TODO
-    """
-
-    _tags = {
-        "authors": ["tingiskhan", "felipeangleimvieira"],
-        "maintainers": ["tingiskhan"],
-        "python_version": None,
-        "python_dependencies": ["prophetverse"],
-        "object_type": "forecaster",
-        "scitype:y": "univariate",
-        "ignores-exogeneous-X": False,
-        "capability:insample": True,
-        "capability:pred_int": True,
-        "capability:pred_int:insample": True,
-        "capability:missing_values": True,
-        "y_inner_mtype": "pd.Series",
-        "X_inner_mtype": "pd.DataFrame",
-        "requires-fh-in-fit": False,
-        "X-y-must-have-same-index": True,
-        "enforce_index_type": None,
-        "fit_is_empty": False,
-        "capability:categorical_in_X": True,
-    }
-
-    def __init__(
-        self,
-        time_varying_gate: bool = False,
-        time_varying_rate: bool = False,
-        inference_engine=None,
-    ):
-        super().__init__(scale=1.0, inference_engine=inference_engine)
-
-        if time_varying_gate:
-            raise NotImplementedError(
-                "Time-varying gate parameters are not implemented yet."
-            )
-
-        if time_varying_rate:
-            raise NotImplementedError(
-                "Time-varying rate parameters are not implemented yet."
-            )
-
-        self.time_varying_gate = time_varying_gate
-        self.time_varying_rate = time_varying_rate
-
-    def _sample_gate(self, length: int, X: np.ndarray) -> jnp.ndarray:
-        """Sample the gate parameter for the ZIP model."""
-        features = np.ones((length, 1))
-
-        if X is not None:
-            features = np.concatenate((features, X), axis=1)
-
-        with numpyro.plate("factors", features.shape[-1]):
-            beta = numpyro.sample("beta", Normal())
-
-        regressors = features @ beta
-
-        # TODO: add support for time varying gate parameters
-        gate = jax.nn.sigmoid(regressors)
-
-        return gate
-
-    def _sample_rate(
-        self,
-        length: int,
-        X: np.ndarray,
-    ) -> jnp.ndarray:
-        """Sample the log_rate parameter for the ZIP model."""
-        features = np.ones((length, 1))
-
-        if X is not None:
-            features = np.concatenate((features, X), axis=1)
-
-        with numpyro.plate("factors", features.shape[-1]):
-            beta = numpyro.sample("beta", Normal())
-
-        regressors = features @ beta
-
-        # TODO: add support for time varying gate parameters
-        rate = jnp.exp(regressors)
-
-        return rate
-
-    def model(  # noqa: D102
-        self,
-        length: int,
-        y: jnp.ndarray,
-        X: np.ndarray,
-        mask: jnp.ndarray,
-        oos: int = 0,
-        index: np.array = None,
-    ):
-        with numpyro.handlers.scope(prefix="gate"):
-            gate = self._sample_gate(length, X)
-
-        with numpyro.handlers.scope(prefix="rate"):
-            rate = self._sample_rate(length, X)
-
-        # NB: by indexing the gate and rate we can speed up posterior predictive
-        # sampling
-        if index is not None:
-            gate = gate[index]
-            rate = rate[index]
-
-        with numpyro.handlers.mask(mask=mask):
-            sampled_y = numpyro.sample(
-                "y:ignore", ZeroInflatedPoisson(1.0 - gate, rate), obs=y
-            )
-
-        if oos == 0:
-            return
-
-        numpyro.deterministic("observed", sampled_y)
-        numpyro.deterministic("rate", rate)
-        numpyro.deterministic("gate", gate)
-
-        return
-
-    def _predict(self, fh, X):
-        predictive_samples = self.predict_components(fh=fh, X=X)
-        return predictive_samples["observed"]
-
-    def predict_components(self, fh: ForecastingHorizon, X: pd.DataFrame = None):  # noqa: D102
-        if self._is_vectorized:
-            return self._vectorize_predict_method("predict_components", X=X, fh=fh)
-
-        fh_as_index = self.fh_to_index(fh)
-
-        X_inner = self._check_X(X=X)
-        predictive_samples_ = self._get_predictive_samples_dict(fh=fh, X=X_inner)
-
-        mapping = {
-            "observed": np.median,
-            "rate": np.mean,
-            "gate": np.mean,
-        }
-
-        out = pd.DataFrame(
-            data={
-                site: mapping[site](data, axis=0).flatten()
-                for site, data in predictive_samples_.items()
-            },
-            index=self.periodindex_to_multiindex(fh_as_index),
-        ).sort_index()
-
-        return self._inv_scale_y(out)
 
 
 class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
