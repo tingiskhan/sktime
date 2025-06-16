@@ -7,11 +7,12 @@ import numpyro.handlers
 import pandas as pd
 from numpyro.distributions import (
     Bernoulli,
-    GaussianRandomWalk,
     LogNormal,
     Normal,
     Poisson,
+    TransformedDistribution,
 )
+from numpyro.distributions.transforms import RecursiveLinearTransform
 from prophetverse.sktime.base import BaseBayesianForecaster
 from skpro.distributions import Empirical
 from xarray import DataArray
@@ -153,14 +154,28 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
         # TODO: support autoregressive terms
         if time_regressor:
             sigma = numpyro.sample("sigma", LogNormal()) ** 0.5
+            eps = Normal(scale=sigma).expand((length, 1)).to_event(1)
+
+            transition_matrix = jnp.eye(1)
+
             time_varying_component = numpyro.sample(
-                "x", GaussianRandomWalk(scale=sigma, num_steps=length)
-            )
+                "x",
+                TransformedDistribution(
+                    eps, RecursiveLinearTransform(transition_matrix=transition_matrix)
+                ),
+            ).squeeze(1)
 
             if oos > 0:
-                x_oos = time_varying_component[-1] + numpyro.sample(
-                    "x_oos", GaussianRandomWalk(scale=sigma, num_steps=oos)
-                )
+                mean = jnp.eye(oos, 1) * time_varying_component[-1]
+                eps_oos = Normal(mean, sigma).to_event(1)
+
+                x_oos = numpyro.sample(
+                    "x_oos",
+                    TransformedDistribution(
+                        eps_oos,
+                        RecursiveLinearTransform(transition_matrix=transition_matrix),
+                    ),
+                ).squeeze(1)
 
                 time_varying_component = jnp.concatenate(
                     (time_varying_component, x_oos), axis=0
