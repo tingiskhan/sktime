@@ -11,6 +11,7 @@ from numpyro.distributions import (
     Normal,
     Poisson,
     TransformedDistribution,
+    TruncatedNormal,
 )
 from numpyro.distributions.transforms import RecursiveLinearTransform
 from prophetverse.sktime.base import BaseBayesianForecaster
@@ -150,36 +151,42 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
 
         regressors = features @ beta
 
-        time_varying_component = 0.0
-        # TODO: support autoregressive terms
-        if time_regressor:
-            sigma = numpyro.sample("sigma", LogNormal()) ** 0.5
-            eps = Normal(scale=sigma).expand((length, 1)).to_event(1)
+        if not time_regressor:
+            return regressors
 
-            transition_matrix = jnp.eye(1)
+        sigma = numpyro.sample("sigma", LogNormal()) ** 0.5
+        reversion_speed = numpyro.sample("phi", TruncatedNormal(low=-1.0, high=1.0))
+        offset = numpyro.sample("offset", Normal())
 
-            time_varying_component = numpyro.sample(
-                "x",
+        alpha = offset * (1.0 - reversion_speed)
+
+        transition_matrix = reversion_speed.reshape((1, 1))
+        alpha = alpha.reshape((1, 1))
+
+        eps = Normal(loc=alpha, scale=sigma).expand((length, 1)).to_event(1)
+
+        time_varying_component = numpyro.sample(
+            "x",
+            TransformedDistribution(
+                eps, RecursiveLinearTransform(transition_matrix=transition_matrix)
+            ),
+        ).squeeze(1)
+
+        if oos > 0:
+            mean = jnp.eye(oos, 1) * time_varying_component[-1] + alpha
+            eps_oos = Normal(mean, sigma).to_event(1)
+
+            x_oos = numpyro.sample(
+                "x_oos",
                 TransformedDistribution(
-                    eps, RecursiveLinearTransform(transition_matrix=transition_matrix)
+                    eps_oos,
+                    RecursiveLinearTransform(transition_matrix=transition_matrix),
                 ),
             ).squeeze(1)
 
-            if oos > 0:
-                mean = jnp.eye(oos, 1) * time_varying_component[-1]
-                eps_oos = Normal(mean, sigma).to_event(1)
-
-                x_oos = numpyro.sample(
-                    "x_oos",
-                    TransformedDistribution(
-                        eps_oos,
-                        RecursiveLinearTransform(transition_matrix=transition_matrix),
-                    ),
-                ).squeeze(1)
-
-                time_varying_component = jnp.concatenate(
-                    (time_varying_component, x_oos), axis=0
-                )
+            time_varying_component = jnp.concatenate(
+                (time_varying_component, x_oos), axis=0
+            )
 
         return regressors + time_varying_component
 
