@@ -156,9 +156,8 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
 
         sigma = numpyro.sample("sigma", LogNormal()) ** 0.5
         reversion_speed = numpyro.sample("phi", TruncatedNormal(low=-1.0, high=1.0))
-        offset = numpyro.sample("offset", Normal())
 
-        alpha = offset * (1.0 - reversion_speed)
+        alpha = jnp.zeros((1, 1))
 
         transition_matrix = reversion_speed.reshape((1, 1))
         alpha = alpha.reshape((1, 1))
