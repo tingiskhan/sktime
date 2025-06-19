@@ -248,6 +248,6 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
         if oos == 0:
             return
 
-        numpyro.deterministic("observed", sampled_events * sampled_demand)
+        numpyro.deterministic("obs", sampled_events * sampled_demand)
 
         return
