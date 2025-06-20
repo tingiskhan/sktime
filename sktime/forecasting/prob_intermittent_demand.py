@@ -117,7 +117,8 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
             \log{r_t} = \beta_r \cdot X_t + \phi_r \log{r_{t - 1}} + \epsilon_{r, t}, \\
             \sigma^{-1}(p_t) = \beta_p \cdot X_t + \phi_p \sigma^{-1}(p_{t - 1}) + \epsilon_{p, t}, \\
             I_t \sim \mathcal{B}(p_t),
-    :math:`X` is the exogenous variables, and :math:`\sigma^{-1}` denotes the logit function.
+    :math:`X` is the exogenous variables, and :math:`\sigma^{-1}` denotes the logit function. The time varying component
+    can be toggled on or off depending on the value of the `time_varying_<probability|demand>` parameter.
     """
 
     _tags = {
