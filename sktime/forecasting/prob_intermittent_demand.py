@@ -59,7 +59,7 @@ class _BaseProbabilisticDemandForecaster(BaseBayesianForecaster):
             return self._vectorize_predict_method("_predict_components", **kwargs)
 
         predictive_samples = self._get_predictive_samples_dict(**kwargs)
-        y_hat = predictive_samples["observed"]
+        y_hat = predictive_samples["obs"]
 
         index = kwargs["fh"].to_absolute(self.cutoff).to_numpy()
         as_array = DataArray(y_hat, dims=["sample", "time"], coords={"time": index})
