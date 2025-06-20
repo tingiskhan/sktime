@@ -69,6 +69,7 @@ class _BaseProbabilisticDemandForecaster(BaseBayesianForecaster):
         return Empirical(as_frame, time_indep=False)
 
     def _predict(self, fh, X):
+        # TODO: this is technically "wrong" since we should use median rather than mean
         predictive_samples = self.predict_components(fh=fh, X=X)
         return predictive_samples["obs"]
 
