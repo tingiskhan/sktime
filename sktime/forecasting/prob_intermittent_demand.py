@@ -37,7 +37,10 @@ class _BaseProbabilisticDemandForecaster(BaseBayesianForecaster):
     def _get_predict_data(self, X: pd.DataFrame, fh: ForecastingHorizon):
         # TODO: handle this better - only append if X is not in self._X
         if X is not None:
-            X = pd.concat([self._X, X], axis=0, verify_integrity=True)
+            temp = self._X.update(X)
+
+            not_in_X = X.index.difference(self._X.index)
+            X = pd.concat([temp, X[not_in_X]], axis=0, verify_integrity=True)
 
         index = fh.to_absolute_int(self._y.index[0], self._cutoff)
         oos = fh.to_out_of_sample(self.cutoff).to_numpy().size
