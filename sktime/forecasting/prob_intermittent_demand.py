@@ -70,7 +70,7 @@ class _BaseProbabilisticDemandForecaster(BaseBayesianForecaster):
 
     def _predict(self, fh, X):
         predictive_samples = self.predict_components(fh=fh, X=X)
-        return predictive_samples["observed"]
+        return predictive_samples["obs"]
 
     def model(
         self,
