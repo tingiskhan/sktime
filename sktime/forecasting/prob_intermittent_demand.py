@@ -46,7 +46,7 @@ class _BaseProbabilisticDemandForecaster(BaseBayesianForecaster):
         oos = fh.to_out_of_sample(self.cutoff).to_numpy().size
 
         return {
-            "length": self._y.shape[0] + oos,
+            "length": self._y.shape[0],
             "y": None,
             "X": X.values if X is not None else None,
             "oos": oos,
