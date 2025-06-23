@@ -37,10 +37,7 @@ class _BaseProbabilisticDemandForecaster(BaseBayesianForecaster):
     def _get_predict_data(self, X: pd.DataFrame, fh: ForecastingHorizon):
         # TODO: handle this better - only append if X is not in self._X
         if X is not None:
-            temp = self._X.update(X)
-
-            not_in_X = X.index.difference(self._X.index)
-            X = pd.concat([temp, X[not_in_X]], axis=0, verify_integrity=True)
+            X = self._X.update(X)
 
         index = fh.to_absolute_int(self._y.index[0], self._cutoff)
         oos = fh.to_out_of_sample(self.cutoff).to_numpy().size
@@ -119,10 +116,12 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
     where
         .. math::
             \log{r_t} = \beta_r \cdot X_t + \phi_r \log{r_{t - 1}} + \epsilon_{r, t}, \\
-            \sigma^{-1}(p_t) = \beta_p \cdot X_t + \phi_p \sigma^{-1}(p_{t - 1}) + \epsilon_{p, t}, \\
+            \sigma^{-1}(p_t) = \beta_p \cdot X_t + \phi_p \sigma^{-1}(p_{t - 1})
+                + \epsilon_{p, t}, \\
             I_t \sim \mathcal{B}(p_t),
-    :math:`X` is the exogenous variables, and :math:`\sigma^{-1}` denotes the logit function. The time varying component
-    can be toggled on or off depending on the value of the `time_varying_<probability|demand>` parameter.
+    :math:`X` is the exogenous variables, and :math:`\sigma^{-1}` denotes the logit
+    function. The time varying component can be toggled on or off depending on the
+    value of the `time_varying_<probability|demand>` parameter.
     """
 
     _tags = {
