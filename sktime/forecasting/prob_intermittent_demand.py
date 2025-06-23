@@ -37,7 +37,12 @@ class _BaseProbabilisticDemandForecaster(BaseBayesianForecaster):
     def _get_predict_data(self, X: pd.DataFrame, fh: ForecastingHorizon):
         # TODO: handle this better - only append if X is not in self._X
         if X is not None:
-            X = self._X.update(X)
+            temp = self._X.copy()
+            temp.update(X)
+
+            oos_index = X.index.difference(temp.index)
+            if oos_index.size > 0:
+                X = pd.concat([temp, X.loc[oos_index]], axis=0)
 
         index = fh.to_absolute_int(self._y.index[0], self._cutoff)
         oos = fh.to_out_of_sample(self.cutoff).to_numpy().size
@@ -159,7 +164,7 @@ class HurdleDemandForecaster(_BaseProbabilisticDemandForecaster):
     def _sample_parameters(
         self, length: int, X: np.ndarray, time_regressor: bool = False, oos: int = 0
     ) -> jnp.ndarray:
-        features = np.ones((length, 1))
+        features = np.ones((length + oos, 1))
 
         if X is not None:
             features = np.concatenate((features, X), axis=1)
